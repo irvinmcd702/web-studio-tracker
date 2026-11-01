@@ -40,7 +40,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.6.0",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "comment:overrides": [
     "Next 15.5 pins an old postcss for its own build pipeline, and pulls sharp in",
