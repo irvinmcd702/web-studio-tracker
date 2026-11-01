@@ -1,0 +1,152 @@
+# The Coolify deployment.
+#
+# Coolify clones this repository with a read-only deploy key and builds both
+# images itself, so nothing has to be pulled from a registry and no registry
+# credentials live on the server.
+#
+# Why a compose file rather than Coolify's single-Dockerfile mode: migrations.
+# The runtime image deliberately carries no Prisma CLI (see the Dockerfile for
+# what happened when it did), so applying migrations needs its own short-lived
+# container — and `service_completed_successfully` is what guarantees the new
+# app never starts against a schema that failed to migrate.
+#
+# Coolify's own placeholders are doing two jobs here:
+#   SERVICE_FQDN_APP_3000       the public address, wired into Traefik
+#   SERVICE_PASSWORD_POSTGRES   a database password generated once and kept
+#
+# Neither is in this file and neither is in the repository.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
+      POSTGRES_DB: studio_tracker
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracker -d studio_tracker"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tracker:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/studio_tracker?schema=public
+
+  app:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # Bare, so Coolify fills it in and wires Traefik to port 3000.
+      - SERVICE_FQDN_APP_3000
+      - DATABASE_URL=postgresql://tracker:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/studio_tracker?schema=public
+      # Set explicitly rather than derived from the placeholder above: that one
+      # is `host:port` for Traefik's benefit, and every link this app builds
+      # needs a scheme. Behind Cloudflare the browser's side is https even
+      # though Traefik speaks plain http to this container.
+      - APP_URL=${APP_URL}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - UPLOAD_DIR=/app/uploads
+      - CRON_SECRET=${CRON_SECRET}
+      - SMTP_URL=${SMTP_URL}
+      - MAIL_FROM=${MAIL_FROM}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL}
+      # Creates the first administrator on an empty database and prints a
+      # one-time link to the log. Ignored the moment any account exists.
+      - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL}
+      - BOOTSTRAP_ADMIN_NAME=${BOOTSTRAP_ADMIN_NAME}
+      # A studio worth of plausible work, for a walkthrough. Refuses the
+      # moment any project exists.
+      - SEED_DEMO_DATA=${SEED_DEMO_DATA}
+      - DEMO_PASSWORD=${DEMO_PASSWORD}
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # The nightly run: the retention sweep first, then the digest if it is on.
+  # busybox has both crond and wget, so this needs no image of its own and
+  # installs nothing. The secret is passed by reference, never written into
+  # the crontab file.
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      - CRON_SECRET=${CRON_SECRET}
+      - DIGEST_AT=${DIGEST_AT:-0 8 * * *}
+      # Outreach is checked every five minutes. That interval is the
+      # resolution of every send window and every gap between two
+      # messages, and the campaign page says so rather than letting
+      # somebody discover it from the timestamps. Harmless while outreach
+      # is off: the endpoint answers {skipped} after one settings read.
+      - OUTREACH_AT=${OUTREACH_AT:-*/5 * * * *}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "$$DIGEST_AT wget -q -O- --post-data='{}' --header=\"Content-Type: application/json\" --header=\"Authorization: Bearer \$$CRON_SECRET\" http://app:3000/api/cron/daily" > /etc/crontabs/root
+        echo "$$OUTREACH_AT wget -q -O- --post-data='{}' --header=\"Content-Type: application/json\" --header=\"Authorization: Bearer \$$CRON_SECRET\" http://app:3000/api/cron/outreach" >> /etc/crontabs/root
+        exec crond -f -l 8
+
+  # Nightly copy of the database and the files, taken as a pair.
+  #
+  # Coolify's own backup feature only covers databases it manages as their own
+  # resource; this Postgres is a service inside a compose deployment, so it
+  # sees nothing. Hence this.
+  #
+  # Read `scripts/backup.sh` for what it actually does — in particular why the
+  # database is dumped before the files are archived, and why every dump is
+  # read back before the run counts as a success.
+  backup:
+    build:
+      context: .
+      target: backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGPASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=tracker
+      - POSTGRES_DB=studio_tracker
+      - BACKUP_AT=${BACKUP_AT:-0 3 * * *}
+      - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      # Read-only: a backup process has no business writing to what it copies.
+      - uploads:/uploads:ro
+      - backups:/backups
+
+volumes:
+  pgdata:
+  uploads:
+  backups:

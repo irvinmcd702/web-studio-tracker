@@ -1,0 +1,96 @@
+# The server's copy: pulls images that CI already built, rather than building
+# from source. Nothing here needs the repository — only this file, an `.env`
+# and Docker.
+#
+#   docker compose -f docker-compose.deploy.yml pull
+#   docker compose -f docker-compose.deploy.yml up -d --wait
+#
+# `IMAGE_TAG` is the commit the images were built from. Setting it to an older
+# commit and running the two lines above is the rollback.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a database password}
+      POSTGRES_DB: ${POSTGRES_DB:-studio_tracker}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tracker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs to completion before the app is replaced. If a migration fails the app
+  # is never started, and the container already serving keeps serving.
+  migrate:
+    image: ${IMAGE:-ghcr.io/owner/repo}-migrator:${IMAGE_TAG:-latest}
+    pull_policy: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-studio_tracker}?schema=public
+    restart: "no"
+
+  app:
+    image: ${IMAGE:-ghcr.io/owner/repo}:${IMAGE_TAG:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-studio_tracker}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?generate one with openssl rand -base64 32}
+      # The address people type, which behind Cloudflare is the https one even
+      # though this container is only ever spoken to over http.
+      APP_URL: ${APP_URL:?the address people will actually open}
+      UPLOAD_DIR: /app/uploads
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      CRON_SECRET: ${CRON_SECRET:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      # Bound to loopback: Cloudflare reaches this through the tunnel or the
+      # reverse proxy on the same host, and nothing should reach the app by its
+      # public address directly — that would be a way round the proxy.
+      - "127.0.0.1:${PORT:-3000}:3000"
+
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    profiles: ["digest"]
+    depends_on:
+      - app
+    environment:
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET to run the digest}
+      DIGEST_AT: ${DIGEST_AT:-0 8 * * *}
+      # Outreach is checked every five minutes. That interval is the
+      # resolution of every send window and every gap between two
+      # messages, and the campaign page says so rather than letting
+      # somebody discover it from the timestamps. Harmless while outreach
+      # is off: the endpoint answers {skipped} after one settings read.
+      OUTREACH_AT: ${OUTREACH_AT:-*/5 * * * *}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "$$DIGEST_AT wget -q -O- --post-data='{}' --header=\"Content-Type: application/json\" --header=\"Authorization: Bearer \$$CRON_SECRET\" http://app:3000/api/cron/daily" > /etc/crontabs/root
+        echo "$$OUTREACH_AT wget -q -O- --post-data='{}' --header=\"Content-Type: application/json\" --header=\"Authorization: Bearer \$$CRON_SECRET\" http://app:3000/api/cron/outreach" >> /etc/crontabs/root
+        exec crond -f -l 8
+
+volumes:
+  pgdata:
+  uploads:

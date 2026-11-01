@@ -1,0 +1,73 @@
+version: 2
+
+# CI fails a build on a high or critical advisory in the shipping tree, but it
+# only says so once somebody pushes. This opens the pull request instead, so an
+# upgrade arrives as reviewable work rather than as a red build on an unrelated
+# change.
+#
+# Weekly, not daily: a small studio does not want a queue of dependency PRs
+# competing with the work, and a batched group is easier to read than fifteen
+# single-package bumps.
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+    # A dependency lands in the first group whose patterns match it, so the
+    # pairs that must move in lockstep are listed before the catch-alls.
+    groups:
+      # react and react-dom have to be the exact same version — the build
+      # aborts with "Incompatible React versions" otherwise — so they can never
+      # travel in separate pull requests. Their types come along, because types
+      # a major behind the runtime are worse than no types.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+
+      # The CLI generates the client. A skew between them is the same trap
+      # wearing different clothes, and it surfaces as a schema error at run
+      # time rather than a failed build.
+      prisma:
+        patterns:
+          - "prisma"
+          - "@prisma/client"
+
+      # Things that only ever affect the checkout, never a request.
+      dev-tooling:
+        patterns:
+          - "typescript"
+          - "vitest"
+          - "tsx"
+          - "dotenv"
+          - "@types/*"
+        update-types:
+          - minor
+          - patch
+
+      # Everything else that is only a patch. next stays out on its own, and
+      # anything larger than a patch gets its own PR too, because those are the
+      # ones that need somebody watching the suite rather than reading a diff.
+      patches:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "next"
+        update-types:
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"

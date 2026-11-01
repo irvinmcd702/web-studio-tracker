@@ -1,0 +1,73 @@
+{
+  "name": "studio-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "node scripts/prepare-standalone.mjs && node .next/standalone/server.js",
+    "lint": "next lint",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset --force",
+    "setup": "docker compose up -d && prisma migrate deploy && tsx prisma/seed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "audit": "node scripts/audit.mjs"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.3.1",
+    "@xyflow/react": "^12.11.2",
+    "bcryptjs": "^2.4.3",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "jose": "^5.9.6",
+    "lucide-react": "^1.30.0",
+    "next": "15.5.23",
+    "nodemailer": "^9.0.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^3.24.1"
+  },
+  "comment:overrides": [
+    "Next 15.5 pins an old postcss for its own build pipeline, and pulls sharp in",
+    "as an optional dependency; npm audit flags both as high. Each is fixed within",
+    "its own major, so we pull them forward here rather than take the Next 16",
+    "upgrade for a build-time CSS parser and an image optimiser this app never",
+    "calls — there is no next/image anywhere in the tree.",
+    "Drop these once Next raises its own floors past postcss 8.5.23 and sharp 0.35."
+  ],
+  "overrides": {
+    "postcss": "^8.5.25",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.10.7",
+    "@types/nodemailer": "^8.0.1",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "dotenv": "^17.4.2",
+    "prisma": "^6.3.1",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.10",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  }
+}

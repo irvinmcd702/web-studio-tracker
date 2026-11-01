@@ -1,0 +1,41 @@
+node_modules
+.next
+out
+build
+.DS_Store
+*.pem
+npm-debug.log*
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Secrets. `.env.example` is the one that is committed, and it holds nothing
+# real — everything else here has a live database URL and a signing secret in
+# it, and a repository is exactly the wrong place for those.
+.env
+.env.*
+!.env.example
+
+# Uploaded files belong to whoever uploaded them and are backed up with the
+# database, not with the source.
+uploads/*
+!uploads/.gitkeep
+uploads-test
+uploads-e2e
+
+# Playwright: the browsers it downloads, and what a failing run leaves behind.
+test-results
+playwright-report
+blob-report
+.playwright
+
+# Local server bookkeeping.
+.server.log
+.server.pid
+*.log
+
+# Credentials handed over by hand. Never committed, whatever they are called.
+deploysecrets*
+*secret*.txt
+*.key
+id_rsa*
+id_ed25519*

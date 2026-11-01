@@ -1,0 +1,121 @@
+name: Deploy
+
+# Builds the runtime and migrator images, publishes them to this repository's
+# own container registry, and tells the server to pull them.
+#
+# Only ever from `main`, only after CI has passed, and never automatically for
+# a pull request — a green test run on somebody's branch is not permission to
+# replace what customers are using.
+
+on:
+  # Manual only in this public copy: there is no server behind it.
+  workflow_dispatch:
+
+concurrency:
+  # Two deploys racing each other onto one server is how you get a container
+  # running an image that no longer matches the database.
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish:
+    # `workflow_run` fires whether CI passed or failed; this is the guard.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: meta
+        name: Tag the image with the commit it was built from
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # Provided by Actions; no account to create and no key to rotate.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push the migrator image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: migrator
+          push: true
+          tags: |
+            ${{ env.IMAGE }}-migrator:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE }}-migrator:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    # Everything below needs a server to talk to. Until those secrets exist the
+    # job is skipped rather than failing, so publishing an image works from day
+    # one and the release half can be switched on later by adding them.
+    if: vars.DEPLOY_ENABLED == 'true'
+    environment: production
+
+    steps:
+      - name: Pull the new image and restart
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script_stop: true
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            export IMAGE_TAG=${{ needs.publish.outputs.tag }}
+            docker compose -f docker-compose.deploy.yml pull
+            # Migrations run to completion before the app is replaced; if they
+            # fail, compose stops here and the old container keeps serving.
+            docker compose -f docker-compose.deploy.yml up -d --wait
+            docker image prune -f
+
+      - name: Check it actually came back
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script_stop: true
+          script: |
+            for i in $(seq 1 20); do
+              if curl -fsS http://127.0.0.1:${{ secrets.DEPLOY_PORT_HTTP || 3000 }}/api/health; then
+                echo; echo "healthy"; exit 0
+              fi
+              sleep 3
+            done
+            echo "the new container never answered /api/health"
+            exit 1

@@ -1,0 +1,1598 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Studio-wide settings (single row)
+// ---------------------------------------------------------------------------
+
+/**
+ * Defaults applied to every newly created project. A project keeps its own copy
+ * of these flags, so changing the defaults never rewrites existing projects.
+ */
+model StudioSettings {
+  id        String   @id @default("default")
+  updatedAt DateTime @updatedAt
+
+  portalShowDescription Boolean @default(true)
+  portalShowDueDate     Boolean @default(true)
+  portalShowTasks       Boolean @default(true)
+  portalShowChat        Boolean @default(true)
+  portalShowFiles       Boolean @default(true)
+  portalAllowUploads    Boolean @default(true)
+  portalShowHours       Boolean @default(true)
+  portalShowMoney       Boolean @default(true)
+  portalShowTeam        Boolean @default(false)
+  portalShowApprovals   Boolean @default(true)
+  portalShowDocs        Boolean @default(false)
+  portalShowAgentHours  Boolean @default(false)
+  portalShowStagePlan   Boolean @default(false)
+
+  /// Show agent hours separately inside the studio: on the budget page and in
+  /// the reports. The source is always recorded; this only decides whether
+  /// anyone is shown the split.
+  agentHoursVisible     Boolean @default(true)
+
+  // --- Rocket.Chat outgoing notifications ---------------------------------
+  rocketChatEnabled        Boolean @default(false)
+  // Incoming-webhook URL, e.g. https://chat.example.com/hooks/<id>/<token>
+  rocketChatWebhookUrl     String?
+  // Fallback channel for events with no project, and for projects that
+  // haven't got a channel of their own. Example: "#studio-requests".
+  rocketChatDefaultChannel String?
+
+  notifyRequestCreated     Boolean @default(true)
+  notifyClientMessage      Boolean @default(true)
+  notifyProjectCreated     Boolean @default(true)
+  notifyTicketAssigned     Boolean @default(true)
+  notifyTicketStatusChanged Boolean @default(false)
+  notifyBudgetThreshold    Boolean @default(true)
+  notifyApprovalDecision   Boolean @default(true)
+
+  // Last delivery result, surfaced on the settings page.
+  rocketChatLastSentAt DateTime?
+  rocketChatLastOk     Boolean?
+  rocketChatLastError  String?
+
+  // --- Incoming git events ------------------------------------------------
+  gitEnabled Boolean @default(false)
+  /// Shared secret the forge signs its payloads with. Stored as-is because we
+  /// have to recompute the same HMAC the sender did.
+  gitSecret  String?
+  /// Status names, matched against each project's own workflow. A project
+  /// whose workflow has no such status still gets the comment, just no move.
+  gitStatusOnOpen  String?
+  gitStatusOnMerge String?
+
+  gitLastEventAt   DateTime?
+  gitLastEventInfo String?
+
+  // --- Deadlines and the attention rules ----------------------------------
+  /// Every rule is a threshold in the unit its name gives, and **zero switches
+  /// the rule off**. One number per rule instead of a number plus a boolean:
+  /// there is no such thing as an enabled rule with no threshold, and no way
+  /// to leave the pair contradicting itself.
+  remindDueWithinDays    Int @default(2)
+  remindStalledDays      Int @default(3)
+  remindApprovalDays     Int @default(3)
+  remindClientReplyHours Int @default(24)
+  remindTimerHours       Int @default(10)
+  /// Hours a reply from a lead may sit unanswered before it is worth saying
+  /// so. A person wrote back; leaving them waiting is the one outreach failure
+  /// that costs something.
+  remindOutreachReplyHours   Int @default(24)
+  /// Days a first message may sit waiting for somebody to read it.
+  remindOutreachApprovalDays Int @default(3)
+  /// Projected overrun before the deadline. A plain switch because the rule
+  /// compares two dates the project already carries — there is nothing to tune.
+  remindBudgetPace       Boolean @default(true)
+
+  /// The daily digest. Off by default: a tracker that starts mailing people on
+  /// the day it is installed is a tracker people mute.
+  digestChatEnabled  Boolean @default(false)
+  digestEmailEnabled Boolean @default(false)
+
+  digestLastRunAt DateTime?
+  digestLastInfo  String?
+
+  // --- Drafting with a model (OpenRouter) ---------------------------------
+  /// Master switch for the whole studio. The API key itself is an environment
+  /// variable, like the SMTP password — infrastructure, not a preference.
+  aiEnabled Boolean @default(false)
+  /// Any slug from openrouter.ai/models.
+  aiModel   String  @default("anthropic/claude-sonnet-5")
+
+  /// What a newly created project gets. Off, because sending a client's
+  /// material to a third party is a decision somebody makes rather than one
+  /// they inherit. Each project keeps its own copy, exactly like the portal
+  /// toggles.
+  aiDefaultAllowed Boolean @default(false)
+
+  aiLastUsedAt DateTime?
+  aiLastError  String?
+
+  /// The third gate. Separate from `aiDefaultAllowed` on purpose: a studio may
+  /// happily send its own tickets to a model and still refuse to send it a
+  /// letter from a stranger who never asked to be contacted. Those are
+  /// different questions and they get different answers.
+  outreachAiAllowed Boolean @default(false)
+
+  // --- Outreach -----------------------------------------------------------
+  /// Master switch. Off means the pages are absent rather than empty, exactly
+  /// as every other integration here behaves when it is switched off.
+  outreachEnabled Boolean @default(false)
+
+  outreachFromName    String?
+  /// The subdomain outreach mail comes from. Reply-To plus-addressing and our
+  /// own Message-IDs are both built from it.
+  outreachReplyDomain String?
+  /// **Required before anything sends.** A commercial email without a postal
+  /// address is not a thing this tracker will put on the wire.
+  outreachPostalAddress String?
+  outreachSignature     String?
+  /// Studio-wide ceiling across every campaign in one day. Sits above each
+  /// campaign's own cap and cannot be exceeded by adding campaigns.
+  outreachDailyCap      Int     @default(60)
+
+  outreachLastTickAt   DateTime?
+  outreachLastTickInfo String?
+
+  /// Shared secret the mail provider signs its inbound payloads with. Stored
+  /// as-is for the same reason as `gitSecret`: we have to recompute the same
+  /// HMAC the sender did.
+  outreachInboundSecret String?
+
+  outreachLastInboundAt   DateTime?
+  outreachLastInboundInfo String?
+
+  // --- How long things are kept -------------------------------------------
+  /// Days, and **zero keeps it forever** — the same convention as the reminder
+  /// rules. Zero is the default for all of them because an upgrade must not
+  /// silently start deleting a studio's history; choosing a period is a
+  /// decision somebody makes, and the settings page says so.
+  ///
+  /// Operational tables (sign-in counters, spent one-time links, webhook
+  /// delivery ids) are not listed here: they have fixed short lifetimes in
+  /// `lib/retention.ts` because there is no sensible reason to keep them.
+  retainActivityDays Int @default(0)
+  retainChatDays     Int @default(0)
+  retainAiUsageDays  Int @default(0)
+  retainMeetingDays  Int @default(0)
+  /// Outreach messages, and the diary entries that record them. The lead
+  /// itself is not swept, and neither is `Suppression`.
+  retainOutreachDays Int @default(0)
+
+  retentionLastRunAt DateTime?
+  retentionLastInfo  String?
+
+  // --- Who answers for the data -------------------------------------------
+  /// The entity a customer would name in a complaint, and the address they
+  /// write to. Without these the portal's privacy notice says outright that
+  /// the studio has not filled them in, rather than inventing a controller.
+  studioLegalName    String?
+  privacyContactEmail String?
+  /// The studio's own paragraphs — legal basis, jurisdiction, anything the
+  /// tracker cannot know. Everything else in the notice is read from the live
+  /// configuration, so it cannot claim an integration that is switched off.
+  privacyNoteExtra   String? @db.Text
+}
+
+// ---------------------------------------------------------------------------
+// People & organisations
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN // studio owner: everything, including workflow + team management
+  MANAGER // project manager: owns projects, talks to clients
+  MEMBER // developer / designer: works on tickets
+  CLIENT // external customer: portal access to their own projects only
+}
+
+enum AuthTokenKind {
+  INVITE // first sign-in: the person picks their own password
+  RESET // forgotten password
+}
+
+/**
+ * One-time link for setting a password. Only a hash is stored, so a database
+ * dump can't be turned into account access.
+ */
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String
+  kind      AuthTokenKind
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  createdById String?
+
+  user      User  @relation("AuthTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("AuthTokenIssuer", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([userId, kind])
+}
+
+/**
+ * Sliding-window counter for failed sign-ins. Keyed per email and per client
+ * address, so one attacker can't lock out a whole office and a botnet can't
+ * spread a guess across addresses unnoticed.
+ */
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  count       Int       @default(0)
+  windowStart DateTime  @default(now())
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@index([lockedUntil])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  position     String?
+  /// What people type after an `@`. Short, lowercase and stable — an email
+  /// changes when somebody marries, and a mention written last year should
+  /// still point at the same person.
+  handle       String   @unique
+  /// Username in the forge (GitHub/GitLab). Pull-request events carry only a
+  /// login, never an email, so without this a PR cannot be attributed.
+  gitLogin     String?
+  avatarColor  String   @default("#6366f1")
+  /// Hours this person is available in a normal week. Used only to say when
+  /// their week is over-committed — it is a planning figure, never a target
+  /// and never anything the timesheet is checked against.
+  weeklyCapacity Int    @default(40)
+  role         Role     @default(MEMBER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  /**
+   * Sessions issued before this moment are rejected. Set on every password
+   * change, so changing a password signs out every other device.
+   */
+  passwordChangedAt DateTime?
+
+  // Only set for role = CLIENT — links the portal user to a customer company.
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  teamMemberships TeamMember[]
+  projectRoles    ProjectMember[]
+  projectAccess   ProjectAccess[] @relation("ProjectAccessUser")
+  accessGranted   ProjectAccess[] @relation("ProjectAccessGranter")
+  managedProjects Project[]       @relation("ProjectManager")
+  reportedTickets Ticket[]        @relation("TicketReporter")
+  requestedApprovals Approval[]   @relation("ApprovalRequester")
+  decidedApprovals   Approval[]   @relation("ApprovalDecider")
+  assignedTickets Ticket[]        @relation("TicketAssignee")
+  comments        TicketComment[]
+  chatMessages    ChatMessage[]
+  workLogs        WorkLog[]
+  runningTimer    RunningTimer?
+  uploads         Attachment[]
+  activities      Activity[]
+  handledRequests ClientRequest[] @relation("RequestOwner")
+  authoredDocs    Doc[]           @relation("DocAuthor")
+  editedDocs      Doc[]           @relation("DocEditor")
+  authTokens      AuthToken[]     @relation("AuthTokenUser")
+  issuedTokens    AuthToken[]     @relation("AuthTokenIssuer")
+  apiTokens       ApiToken[]      @relation("ApiTokenOwner")
+  aiUsage         AiUsage[]
+  templates       ProjectTemplate[] @relation("TemplateAuthor")
+  meetings        Meeting[]         @relation("MeetingAuthor")
+  mentions        Mention[] @relation("MentionTarget")
+  mentionsMade    Mention[] @relation("MentionAuthor")
+  statusChanges   TicketStatusChange[]
+  timelineEntries TimelineEntry[]
+  ownedLeads      Lead[]               @relation("LeadOwner")
+  leadImports     LeadImport[]
+  campaigns          Campaign[]          @relation("CampaignAuthor")
+  approvedEnrolments CampaignEnrolment[] @relation("EnrolmentApprover")
+  approvedMessages   OutreachMessage[]   @relation("MessageApprover")
+
+  @@index([role])
+}
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  contactName String?
+  email       String?
+  phone       String?
+  website     String?
+  notes       String?
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users    User[]
+  projects Project[]
+  requests ClientRequest[]
+  timeline TimelineEntry[]
+}
+
+// ---------------------------------------------------------------------------
+// Teams — standing groups by discipline (backend, design…). They are a
+// directory of who does what, not an access rule: work happens on projects,
+// and a project's crew is picked person by person. One person can sit in
+// several teams and on several projects at once.
+// ---------------------------------------------------------------------------
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String   @default("#0ea5e9")
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members TeamMember[]
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String
+  userId   String
+  // Free-form role inside the team: "Tech lead", "QA", "Designer"…
+  title    String?
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+/**
+ * One person on one project's crew. This is what grants a member access to
+ * the project and what makes them assignable on its tickets.
+ */
+/// A meeting and what came out of it.
+///
+/// The transcript is kept exactly as it arrived — captions and all, if that is
+/// how it came. `summary` holds what the model made of it, and is null until
+/// somebody asks; the raw text is the record, the summary is a reading of it.
+model Meeting {
+  id    String   @id @default(cuid())
+  title String
+  /// When the meeting happened, which is not when it was uploaded.
+  heldAt DateTime
+
+  /// As it arrived, never rewritten.
+  transcript String
+  /// Where it came from, for the record: a file name, or "pasted".
+  source String?
+
+  /// MeetingSummary as JSON: discussed, decided, actions, questions.
+  summary      Json?
+  summarisedAt DateTime?
+  /// True when the transcript was too long to send whole, so the summary is
+  /// of a meeting with a hole in the middle. Shown wherever the summary is.
+  summaryPartial Boolean @default(false)
+
+  projectId String
+  authorId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  User?   @relation("MeetingAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  tickets Ticket[]
+
+  @@index([projectId, heldAt])
+}
+
+/// Somebody let into a closed project without being put on the crew.
+///
+/// Deliberately not the same thing as ProjectMember: adding a second manager
+/// to the crew would put them in the workload figures, the avatars and the
+/// assignee lists, which is a lie about who is doing the work. This says only
+/// "allowed to look".
+model ProjectAccess {
+  id          String   @id @default(cuid())
+  projectId   String
+  userId      String
+  /// Who let them in, kept so the list can be accounted for later.
+  grantedById String?
+  createdAt   DateTime @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation("ProjectAccessUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User?   @relation("ProjectAccessGranter", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  // What they do here: "Backend", "Tech lead", "QA". Free-form on purpose —
+  // the same person can be lead on one project and a pair of hands on another.
+  role      String?
+  addedAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Workflows — reusable status machines shared by many projects
+// ---------------------------------------------------------------------------
+
+enum StatusCategory {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isDefault   Boolean  @default(false)
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  statuses    WorkflowStatus[]
+  transitions WorkflowTransition[]
+  projects    Project[]
+  templates   ProjectTemplate[]
+}
+
+model WorkflowStatus {
+  id         String         @id @default(cuid())
+  workflowId String
+  name       String
+  category   StatusCategory @default(TODO)
+  color      String         @default("#64748b")
+  position   Int            @default(0)
+  // The status new tickets land in.
+  isInitial  Boolean        @default(false)
+
+  // Coordinates on the workflow canvas. `position` still drives board column
+  // order, so the diagram can be rearranged without reordering the board.
+  canvasX Float @default(0)
+  canvasY Float @default(0)
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  tickets         Ticket[]
+  transitionsFrom WorkflowTransition[] @relation("TransitionFrom")
+  transitionsTo   WorkflowTransition[] @relation("TransitionTo")
+
+  @@unique([workflowId, name])
+  @@index([workflowId, position])
+}
+
+model WorkflowTransition {
+  id         String  @id @default(cuid())
+  workflowId String
+  name       String
+  // null `fromStatusId` means "from any status" (a global transition).
+  fromStatusId String?
+  toStatusId   String
+
+  /**
+   * Rules attached to the arrow, shaped by `lib/workflow-rules.ts`.
+   * `conditions` gate the move; `hooks` fire after it succeeds. Stored as JSON
+   * because they are always read as a whole and their shape evolves with the
+   * rule catalogue rather than with the schema.
+   */
+  conditions Json?
+  hooks      Json?
+
+  workflow   Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  fromStatus WorkflowStatus? @relation("TransitionFrom", fields: [fromStatusId], references: [id], onDelete: Cascade)
+  toStatus   WorkflowStatus  @relation("TransitionTo", fields: [toStatusId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, fromStatusId, toStatusId])
+  @@index([workflowId])
+}
+
+// ---------------------------------------------------------------------------
+// Inbound client requests → projects
+// ---------------------------------------------------------------------------
+
+enum RequestStatus {
+  NEW
+  IN_REVIEW
+  ACCEPTED
+  CONVERTED
+  REJECTED
+}
+
+model ClientRequest {
+  id           String        @id @default(cuid())
+  title        String
+  description  String
+  status       RequestStatus @default(NEW)
+  // Where it came from: "Website form", "Email", "Referral"…
+  source       String?
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  companyName  String?
+  budgetNote   String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  ownerId String?
+  owner   User?   @relation("RequestOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  // Set once the request has been turned into a project.
+  projectId String?  @unique
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  /// HUMAN for the intake form and for staff. MACHINE when the tracker filed
+  /// this from an outreach reply. Both the list and the detail page say so.
+  createdByKind ActorKind @default(HUMAN)
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  attachments Attachment[]
+  timeline    TimelineEntry[]
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum BudgetType {
+  HOURLY // billed per hour against `budgetHours` at `hourlyRate`
+  FIXED // fixed price for the whole scope
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  // Short uppercase prefix used for ticket keys: ACME-14
+  key         String        @unique
+  name        String
+  description String?
+  status      ProjectStatus @default(DRAFT)
+  startDate   DateTime?
+  dueDate     DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Budget
+  budgetType  BudgetType @default(HOURLY)
+  budgetHours Float?
+  hourlyRate  Float?
+  fixedAmount Float?
+  currency    String     @default("USD")
+
+  // Running counter used to build ticket keys.
+  ticketCounter Int @default(0)
+
+  // --- Client portal visibility -------------------------------------------
+  // Per-project switches for what the customer sees in /portal. Every one of
+  // them is enforced server-side, not just hidden in the UI.
+  portalShowDescription Boolean @default(true)
+  portalShowDueDate     Boolean @default(true)
+  portalShowTasks       Boolean @default(true)
+  portalShowChat        Boolean @default(true)
+  portalShowFiles       Boolean @default(true)
+  portalAllowUploads    Boolean @default(true)
+  portalShowHours       Boolean @default(true)
+  portalShowMoney       Boolean @default(true)
+  portalShowTeam        Boolean @default(false)
+  portalShowApprovals   Boolean @default(true)
+  portalShowDocs        Boolean @default(false)
+  portalShowAgentHours  Boolean @default(false)
+  portalShowStagePlan   Boolean @default(false)
+
+  /// Whether this project's material — briefs, tickets, client messages — may
+  /// be sent to the model provider for drafting. Enforced server-side on every
+  /// path, not merely hidden in the interface.
+  aiAllowed Boolean @default(false)
+
+  /// Closed: managers no longer see this project merely for being managers.
+  /// It shows only to the people working on it and to anyone let in by name.
+  /// Administrators are not excluded — see lib/permissions.ts for why.
+  isConfidential Boolean @default(false)
+
+  // Rocket.Chat channel for this project's notifications, e.g. "#acme-store".
+  // Falls back to the studio-wide default channel when empty.
+  rocketChatChannel String?
+  // Highest budget threshold already announced (0, 80 or 100) so the same
+  // warning isn't posted after every logged hour.
+  budgetAlertLevel  Int     @default(0)
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  managerId String?
+  manager   User?   @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id])
+
+  members      ProjectMember[]
+  allowed      ProjectAccess[]
+  meetings     Meeting[]
+  tickets      Ticket[]
+  approvals    Approval[]
+  docs         Doc[]
+  chatMessages ChatMessage[]
+  attachments  Attachment[]
+  activities   Activity[]
+  aiUsage      AiUsage[]
+  mentions     Mention[]
+  request      ClientRequest?
+
+  @@index([status])
+  @@index([clientId])
+  @@index([isConfidential])
+}
+
+// ---------------------------------------------------------------------------
+// Project templates — the shapes a studio builds over and over
+// ---------------------------------------------------------------------------
+
+/**
+ * A project worth repeating: its workflow, how it was billed, what the client
+ * could see, and the tickets it started with.
+ *
+ * Made by saving a project that went well rather than by filling in a form,
+ * because a studio's best template is a job it has already done.
+ */
+model ProjectTemplate {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  isArchived  Boolean @default(false)
+
+  /// The workflow a project made from this starts on. Kept as a relation so a
+  /// deleted workflow leaves the template usable rather than broken.
+  workflowId String?
+  workflow   Workflow? @relation(fields: [workflowId], references: [id], onDelete: SetNull)
+
+  budgetType  BudgetType @default(HOURLY)
+  budgetHours Float?
+  hourlyRate  Float?
+  fixedAmount Float?
+  currency    String     @default("USD")
+
+  // What the client sees. Same set as a project carries.
+  portalShowDescription Boolean @default(true)
+  portalShowDueDate     Boolean @default(true)
+  portalShowTasks       Boolean @default(true)
+  portalShowChat        Boolean @default(true)
+  portalShowFiles       Boolean @default(true)
+  portalAllowUploads    Boolean @default(true)
+  portalShowHours       Boolean @default(true)
+  portalShowMoney       Boolean @default(true)
+  portalShowTeam        Boolean @default(false)
+  portalShowApprovals   Boolean @default(true)
+  portalShowDocs        Boolean @default(false)
+  portalShowAgentHours  Boolean @default(false)
+  portalShowStagePlan   Boolean @default(false)
+
+  createdById String?
+  createdBy   User?    @relation("TemplateAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items ProjectTemplateItem[]
+}
+
+/**
+ * One ticket a template starts a project with.
+ *
+ * No assignee and no status: work is handed to whoever is on the new crew, and
+ * every ticket starts where the workflow says it starts. A template that
+ * pre-assigned somebody who has since left, or pre-placed work in QA, would be
+ * a template people learn to distrust.
+ */
+model ProjectTemplateItem {
+  id         String @id @default(cuid())
+  templateId String
+  position   Int    @default(0)
+
+  title       String
+  description String?
+  acceptance  String?
+  type        TicketType @default(TASK)
+  priority    Priority   @default(MEDIUM)
+  estimate    Float?
+  /// Days after the project's start date. Null when the source ticket had no
+  /// date, or the source project had no start — a template cannot invent one.
+  dueAfterDays Int?
+  isClientVisible Boolean @default(false)
+
+  template ProjectTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Docs — briefs, specs, meeting notes
+// ---------------------------------------------------------------------------
+
+/**
+ * A markdown document. `projectId` is null for studio-wide docs (onboarding,
+ * process notes); otherwise the doc belongs to that project and inherits its
+ * access rules.
+ */
+model Doc {
+  id        String  @id @default(cuid())
+  projectId String?
+  title     String
+  body      String  @db.Text
+  // Shown in the client portal when the project allows docs at all.
+  isClientVisible Boolean @default(false)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("DocAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User?    @relation("DocEditor", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([projectId, updatedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Stage approvals — the client signing off on a deliverable
+// ---------------------------------------------------------------------------
+
+enum ApprovalStatus {
+  DRAFT // being prepared; the client can't see it yet
+  PENDING // sent, waiting on the client
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+model Approval {
+  id          String         @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      ApprovalStatus @default(DRAFT)
+  position    Int            @default(0)
+  // Optional value of this stage, for staged billing.
+  amount      Float?
+  dueDate     DateTime?
+
+  requestedById String?
+  requestedAt   DateTime?
+
+  // Who closed it — a client user, or a staff member recording a decision
+  // that arrived by phone or email. Either way it is attributed.
+  decidedById  String?
+  decidedAt    DateTime?
+  decisionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User?        @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  decidedBy   User?        @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  attachments Attachment[]
+
+  @@index([projectId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Tickets
+// ---------------------------------------------------------------------------
+
+enum WorkSource {
+  HUMAN
+  AGENT
+}
+
+enum ApiTokenKind {
+  PERSONAL
+  AGENT
+}
+
+enum ApiScope {
+  READ
+  WRITE
+}
+
+enum TicketType {
+  TASK
+  BUG
+  FEATURE
+  CHORE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Ticket {
+  id          String     @id @default(cuid())
+  projectId   String
+  // Per-project sequence; display key is `${project.key}-${number}`.
+  number      Int
+  title       String
+  description String?
+  /// What "done" means, as a markdown checklist. Written for whoever picks
+  /// the ticket up, human or agent, and can be required by a transition.
+  acceptance  String?
+  type        TicketType @default(TASK)
+  priority    Priority   @default(MEDIUM)
+  statusId    String
+  // Board ordering inside a column.
+  position    Float      @default(0)
+  estimate    Float? // hours
+  dueDate     DateTime?
+  // Visible to the client in the portal.
+  isClientVisible Boolean @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status     WorkflowStatus @relation(fields: [statusId], references: [id])
+  assigneeId String?
+  assignee   User?          @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reporterId String?
+  reporter   User?          @relation("TicketReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+
+  /// The meeting this came out of, when it came out of one. Six months later
+  /// the useful question about a ticket is usually why it exists.
+  meetingId String?
+  meeting   Meeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+
+  comments    TicketComment[]
+  workLogs    WorkLog[]
+  timers      RunningTimer[]
+  attachments Attachment[]
+  activities  Activity[]
+  mentions    Mention[]
+  statusChanges TicketStatusChange[]
+
+  @@unique([projectId, number])
+  @@index([projectId, statusId])
+  @@index([assigneeId])
+  @@index([meetingId])
+}
+
+/**
+ * Every move a ticket has made, as data rather than as a sentence.
+ *
+ * The activity feed already says "moved the ticket: QA → Done", but that is
+ * prose for a human to read. A workflow condition like "only once this has
+ * already been through QA" needs to ask a question, and parsing a message that
+ * changes when somebody renames a status is not asking a question.
+ *
+ * **No foreign keys to `WorkflowStatus` on purpose.** A history that disappears
+ * when the workflow is edited is not a history. The status name is copied for
+ * the same reason: renaming "QA" to "Testing" must not rewrite what happened
+ * last March.
+ */
+model TicketStatusChange {
+  id       String @id @default(cuid())
+  ticketId String
+
+  fromStatusId String?
+  toStatusId   String
+  /// The name as it stood at the time, so the record stays readable.
+  toStatusName String
+
+  userId    String?
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketComment {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+/**
+ * A stopwatch currently running for a person. One per user — starting a new one
+ * closes the previous. Stopping turns the elapsed time into a WorkLog.
+ */
+model RunningTimer {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  ticketId  String
+  startedAt DateTime @default(now())
+  note      String?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+// Hours burned against a ticket — the source of truth for budget consumption.
+model WorkLog {
+  id          String   @id @default(cuid())
+  ticketId    String
+  userId      String
+  hours       Float
+  spentOn     DateTime @default(now())
+  description String?
+  createdAt   DateTime @default(now())
+
+  /// Who actually did the work. Time written through an agent token is never
+  /// passed off as a person's own hours.
+  source      WorkSource @default(HUMAN)
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Client chat & files
+// ---------------------------------------------------------------------------
+
+model ChatMessage {
+  id        String    @id @default(cuid())
+  projectId String
+  authorId  String
+  body      String
+  // Internal notes are hidden from the client portal.
+  isInternal Boolean  @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  fileName     String // stored name on disk
+  originalName String
+  mimeType     String
+  size         Int
+  uploadedById String
+  isClientVisible Boolean @default(true)
+  createdAt    DateTime @default(now())
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  ticketId String?
+  ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  requestId String?
+  request   ClientRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  approvalId String?
+  approval   Approval? @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([ticketId])
+}
+
+// ---------------------------------------------------------------------------
+// Activity feed
+// ---------------------------------------------------------------------------
+
+/**
+ * A bearer token for the JSON API. It acts as the person who created it and
+ * inherits their project scope exactly: an agent can never see more than the
+ * developer who issued it.
+ */
+model ApiToken {
+  id         String       @id @default(cuid())
+  name       String
+  /// SHA-256 of the token. The plaintext is shown once, at creation.
+  tokenHash  String       @unique
+  /// First characters, so a token can be recognised in a list.
+  prefix     String
+  kind       ApiTokenKind @default(AGENT)
+  scopes     ApiScope[]   @default([READ])
+  userId     String
+  createdAt  DateTime     @default(now())
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+
+  user User @relation("ApiTokenOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/**
+ * Delivery ids we have already processed, so a captured webhook payload cannot
+ * be replayed into a second comment and a second transition. Kept for a week,
+ * which is far longer than any forge retries for.
+ */
+model WebhookDelivery {
+  id         String   @id
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
+}
+
+/**
+ * Every call to the model provider, successful or not.
+ *
+ * A studio paying per token has to be able to see what it is paying for, and
+ * a studio that sent a client's brief to a third party has to be able to say
+ * when, by whom and for which project. Kept even on failure, because "it was
+ * refused" is also an answer to that question.
+ */
+/// Kept so "was this person's material ever sent anywhere" has an answer for
+/// a lead as well as for a project — which is exactly what PRIVACY.md promises.
+model AiUsage {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// What was asked for: "acceptance", "chat_summary", "request_draft".
+  kind  String
+  model String
+
+  promptTokens     Int    @default(0)
+  completionTokens Int    @default(0)
+  /// USD as reported by the provider; null when it didn't say.
+  costUsd          Float?
+
+  ok    Boolean @default(true)
+  error String?
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  userId String?
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  leadId String?
+  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([projectId])
+}
+
+/**
+ * Somebody was named in a comment or a message.
+ *
+ * A row of its own rather than a search through message bodies: the panel that
+ * shows it has to know what has been *read*, and a body cannot remember that.
+ *
+ * The excerpt is copied on purpose. It is what the reader is shown before they
+ * click, and copying it means the panel needs no joins — and that editing the
+ * comment afterwards cannot silently rewrite what somebody was told they were
+ * called about.
+ */
+model Mention {
+  id        String    @id @default(cuid())
+  userId    String
+  authorId  String?
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  /// Roughly a sentence around the mention, as it was written.
+  excerpt String
+
+  projectId String?
+  ticketId  String?
+
+  user    User     @relation("MentionTarget", fields: [userId], references: [id], onDelete: Cascade)
+  author  User?    @relation("MentionAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticket  Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([ticketId])
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  projectId String?
+  ticketId  String?
+  userId    String?
+  // e.g. "ticket.created", "ticket.status_changed", "project.team_attached"
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticket  Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([ticketId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// The diary — what happened to a client, a request, or a lead
+// ---------------------------------------------------------------------------
+
+enum TimelineKind {
+  /// A person wrote it.
+  NOTE
+  /// A request or a lead moved.
+  STATUS
+  EMAIL_OUT
+  EMAIL_IN
+  BOUNCE
+  COMPLAINT
+  UNSUBSCRIBE
+  CALL
+  MEETING
+  /// Arrived in an import, with the line saying where the list came from.
+  IMPORT
+  /// The tracker itself: converted to a project, client record created…
+  SYSTEM
+}
+
+/// Who put this here. MACHINE is what makes an entry a model filed legible as
+/// one; CONTACT is the other side of the conversation, who has no account.
+/// Same convention as `WorkSource`.
+enum ActorKind {
+  HUMAN
+  MACHINE
+  CONTACT
+}
+
+/**
+ * One line of history against a client, a request or a lead.
+ * **Append-only.** There is no `updatedAt` and no update path anywhere in the
+ * app: a diary you can edit afterwards is not a diary, and the whole reason to
+ * keep one is that it says what was true at the time. Corrections are new
+ * entries.
+ * **Not `Activity`.** That table is a machine audit trail and it is swept by
+ * `retainActivityDays`; a diary somebody deliberately keeps must not evaporate
+ * because an admin set an audit-log retention period. Different lifecycle,
+ * different knob, different rights story — so, a different table.
+ * The nullable foreign keys follow `Activity` and `Mention`: real relations to
+ * several possible parents, one index each. A string `(type, id)` pair would
+ * be neither a foreign key nor a cascade, and would rot the first time a row
+ * was deleted out from under it.
+ */
+model TimelineEntry {
+  id   String       @id @default(cuid())
+  kind TimelineKind
+
+  /// One line, always present — what a reader scanning the column sees.
+  summary String
+  /// The rest, when there is any. Never rewritten.
+  body    String? @db.Text
+
+  actorKind ActorKind @default(HUMAN)
+  /// The studio account, when there was one. Null for CONTACT, and for the
+  /// tracker acting on a schedule with nobody at the keyboard.
+  userId    String?
+
+  /// Pinned entries sort to the top and are never swept.
+  isPinned Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  clientId   String?
+  requestId  String?
+  leadId     String?
+  campaignId String?
+  messageId  String?
+
+  user    User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  client  Client?        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  request ClientRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  lead     Lead?            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign?        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  message  OutreachMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, createdAt])
+  @@index([requestId, createdAt])
+  @@index([leadId, createdAt])
+  @@index([campaignId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Outreach: the people the studio has not spoken to yet
+// ---------------------------------------------------------------------------
+
+enum LeadStatus {
+  NEW
+  ACTIVE
+  REPLIED
+  BOUNCED
+  UNSUBSCRIBED
+  DISQUALIFIED
+  CONVERTED
+}
+
+enum LeadSourceKind {
+  CSV_IMPORT
+  MANUAL
+  INBOUND
+  REFERRAL
+}
+
+/**
+ * Somebody the studio might write to, who has not asked to hear from it.
+ *
+ * This is the first table in the schema holding people with no relationship to
+ * the studio at all, which is why the provenance fields are not optional in
+ * the form that creates them. A list with no answer to "where did you get
+ * this" is a list the studio cannot defend, and the first message the tracker
+ * sends has to say where the address came from.
+ */
+model Lead {
+  id    String @id @default(cuid())
+  /// As it was given, for display and for the envelope.
+  email String
+  /// Trimmed and lowercased. The dedup key, and the only thing joined on.
+  /// Deliberately not clever: no gmail dot-stripping, no plus-tag removal.
+  /// Guessing that two addresses are one person is inventing a fact.
+  emailKey String @unique
+
+  name        String?
+  companyName String?
+  title       String?
+  website     String?
+  phone       String?
+  country     String?
+
+  status LeadStatus @default(NEW)
+
+  // --- Where this came from -----------------------------------------------
+  sourceKind   LeadSourceKind
+  /// "Conference badge scan, WebSummit Oct 2026", "typed in by Dana".
+  sourceDetail String?
+  /// What the studio believes its basis is, in the studio's own words. The
+  /// tracker records the answer; it cannot supply one.
+  consentNote  String?
+  importId     String?
+
+  ownerId String?
+
+  lastContactedAt DateTime?
+  lastRepliedAt   DateTime?
+  replyCount      Int       @default(0)
+  bounceCount     Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  import LeadImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  owner  User?       @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  enrolments CampaignEnrolment[]
+  messages   OutreachMessage[]
+  timeline   TimelineEntry[]
+  requests   ClientRequest[]
+  aiUsage    AiUsage[]
+
+  @@index([status])
+  @@index([lastContactedAt])
+  @@index([ownerId])
+}
+
+/**
+ * One upload of a list, and what became of every row in it.
+ *
+ * The counts are kept rather than recomputed because they are the record of
+ * what the studio was told at the time — that 40 of 200 rows were already
+ * suppressed is a fact about that afternoon, not about the table today.
+ */
+model LeadImport {
+  id       String @id @default(cuid())
+  fileName String
+  /// Required by the form. See the note on `Lead`.
+  sourceDetail String
+  consentNote  String?
+
+  rows              Int @default(0)
+  imported          Int @default(0)
+  skippedDuplicate  Int @default(0)
+  skippedSuppressed Int @default(0)
+  skippedInvalid    Int @default(0)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  createdBy User?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  leads     Lead[]
+
+  @@index([createdAt])
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBE
+  COMPLAINT
+  HARD_BOUNCE
+  REPEATED_SOFT_BOUNCE
+  MANUAL
+}
+
+/**
+ * Addresses this tracker will not mail, ever, for any campaign.
+ *
+ * **This is the one table that deliberately keeps an address in the clear**,
+ * while `LoginAttempt` next door keeps only an HMAC. The reason is the whole
+ * point of the table: a hash keyed on a rotatable secret would, on the day
+ * somebody rotates the secret, silently re-permit mail to everyone who asked
+ * not to receive it. A privacy measure that can fail open *into mailing people
+ * who said no* is worse than no measure at all.
+ *
+ * **No foreign key to `Lead`, also on purpose.** Erasing a lead must not
+ * re-open the door, so this row outlives the record it came from — the
+ * standard suppression carve-out, written down here so it is not mistaken for
+ * an oversight.
+ */
+model Suppression {
+  id       String            @id @default(cuid())
+  emailKey String            @unique
+  reason   SuppressionReason
+  /// "one-click unsubscribe", "added by Dana".
+  source   String?
+  note     String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Outreach: campaigns, and the messages they send
+// ---------------------------------------------------------------------------
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  FINISHED
+}
+
+/**
+ * A sequence of touches, and the rules about when they may go out.
+ *
+ * The window and the throttle live on the campaign rather than on the studio
+ * because they are a judgement about one audience: a list of agency owners in
+ * one country wants different hours and a different pace from a list of
+ * developers in another. The studio-wide ceiling sits above all of them in
+ * `StudioSettings.outreachDailyCap` and cannot be exceeded by adding campaigns.
+ */
+model Campaign {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  status      CampaignStatus @default(DRAFT)
+
+  // --- When it may send ----------------------------------------------------
+  /// Hours 0-23 in `timezone`: inclusive start, exclusive end.
+  windowStartHour Int    @default(9)
+  windowEndHour   Int    @default(17)
+  /// ISO weekday numbers, "1,2,3,4,5". Empty means no day is allowed, which
+  /// is a way of pausing without changing the status.
+  windowDays      String @default("1,2,3,4,5")
+  timezone        String @default("UTC")
+  /// Ceiling for this campaign in one local day.
+  dailyCap        Int    @default(30)
+  /// Quiet time between two sends of this campaign. Values below the tick
+  /// interval cannot be honoured, and the form says so rather than lying.
+  minGapMinutes   Int    @default(6)
+
+  /// Overrides the studio-wide from-name. The address itself is never
+  /// per-campaign: it is the outreach subdomain, or nothing.
+  fromName String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy  User?               @relation("CampaignAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  steps      CampaignStep[]
+  enrolments CampaignEnrolment[]
+  messages   OutreachMessage[]
+  timeline   TimelineEntry[]
+
+  @@index([status])
+}
+
+/**
+ * One touch in the sequence.
+ *
+ * The body is a template **a person wrote and saved**. Nothing regenerates it
+ * at send time — see the note at the top of `lib/outreach-send.ts` for why
+ * that is the rule the whole feature rests on.
+ */
+model CampaignStep {
+  id         String @id @default(cuid())
+  campaignId String
+  position   Int
+  /// Days after the previous step actually went out, not after enrolment. A
+  /// sequence that fell behind because of a send window should stay evenly
+  /// spaced rather than firing three messages in an afternoon to catch up.
+  delayDays  Int    @default(3)
+
+  subject String
+  /// Plain text with {{greeting}}, {{name}}, {{companyName}} and {{signature}}.
+  /// The unsubscribe link, the postal address and the provenance sentence are
+  /// appended by the renderer, so no campaign can be saved without them.
+  body    String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaign Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  messages OutreachMessage[]
+
+  @@unique([campaignId, position])
+}
+
+enum EnrolmentStatus {
+  /// Step one is drafted and nobody has said yes yet. Nothing can be sent.
+  AWAITING_APPROVAL
+  ACTIVE
+  COMPLETED
+  STOPPED_REPLIED
+  STOPPED_BOUNCED
+  STOPPED_UNSUBSCRIBED
+  STOPPED_BY_HAND
+}
+
+model CampaignEnrolment {
+  id         String          @id @default(cuid())
+  campaignId String
+  leadId     String
+  status     EnrolmentStatus @default(AWAITING_APPROVAL)
+
+  /// Who read the first touch and said yes. **Null means nothing has been
+  /// sent and nothing can be** — the tick refuses to claim an unapproved
+  /// enrolment, so hiding the button is not the safeguard.
+  approvedById String?
+  approvedAt   DateTime?
+
+  /// Highest step position already sent. 0 = nothing yet.
+  sentStep      Int       @default(0)
+  stoppedReason String?
+  stoppedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  approvedBy User?    @relation("EnrolmentApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  messages OutreachMessage[]
+
+  @@unique([campaignId, leadId])
+  @@index([status])
+}
+
+enum MessageDirection {
+  OUT
+  IN
+}
+
+enum MessageState {
+  DRAFT
+  AWAITING_APPROVAL
+  SCHEDULED
+  /// Claimed by one instance of the server. A lease, not a state of the world.
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+/**
+ * One email, stored whole.
+ *
+ * The body is a copy rather than something re-rendered on demand, for the same
+ * reason `Mention.excerpt` is copied: what was actually sent is the record,
+ * and editing the campaign's template afterwards must not rewrite it.
+ */
+model OutreachMessage {
+  id        String           @id @default(cuid())
+  direction MessageDirection @default(OUT)
+
+  leadId      String?
+  campaignId  String?
+  enrolmentId String?
+  stepId      String?
+
+  /// Kept alongside `leadId` so an inbound nobody could place is still
+  /// readable. Unused until inbound exists.
+  fromEmail String?
+  toEmail   String?
+
+  subject String
+  body    String  @db.Text
+  /// True when a quoted thread was cut off.
+  truncated Boolean @default(false)
+
+  // --- Threading -----------------------------------------------------------
+  /// Ours for OUT, the provider's for IN.
+  rfcMessageId  String? @unique
+  inReplyTo     String?
+  referencesRaw String? @db.Text
+  /// The plus-address token in Reply-To. The primary threading key, because it
+  /// survives clients that strip References.
+  replyToken    String? @unique
+  providerId    String?
+
+  // --- Outbound only -------------------------------------------------------
+  state MessageState @default(DRAFT)
+  /// MACHINE when a model wrote the first version. Stays MACHINE after a
+  /// person edits it: the record is where the words started.
+  draftedBy    ActorKind @default(HUMAN)
+  approvedById String?
+  approvedAt   DateTime?
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  failedAt     DateTime?
+  error        String?
+  attempts     Int       @default(0)
+
+  /// The lease. `claimedBy` is one tick's run id, never a user.
+  claimedAt DateTime?
+  claimedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead       Lead?              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign   Campaign?          @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  enrolment  CampaignEnrolment? @relation(fields: [enrolmentId], references: [id], onDelete: SetNull)
+  step       CampaignStep?      @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  approvedBy User?              @relation("MessageApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  timeline   TimelineEntry[]
+
+  /// The claim query, and the only index the tick actually needs.
+  @@index([state, scheduledFor])
+  @@index([leadId, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([direction, createdAt])
+}

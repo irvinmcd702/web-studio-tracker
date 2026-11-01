@@ -1,0 +1,99 @@
+# The whole thing: database, app, and the volume the uploads live on.
+#
+#   cp .env.example .env      # fill in AUTH_SECRET, APP_URL, SMTP_*
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Migrations run on start, so a deploy of a new image brings the schema with it.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a database password}
+      POSTGRES_DB: ${POSTGRES_DB:-studio_tracker}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tracker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs once per deploy, brings the schema up to date, exits. The app waits
+  # for it to finish successfully before it starts serving.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-studio_tracker}?schema=public
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-studio_tracker}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?generate one with openssl rand -base64 32}
+      APP_URL: ${APP_URL:?the address people will actually open}
+      UPLOAD_DIR: /app/uploads
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      CRON_SECRET: ${CRON_SECRET:-}
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "${PORT:-3000}:3000"
+
+  # The daily digest. Opt in with:
+  #
+  #   docker compose -f docker-compose.prod.yml --profile digest up -d
+  #
+  # A schedule outside the app rather than a timer inside it: two app instances
+  # with an internal timer means everyone gets two letters, and a cron entry is
+  # something you can read, time, disable and run by hand.
+  #
+  # busybox has both crond and wget, so this needs no image of its own and
+  # installs nothing at runtime. The secret is passed by reference, never
+  # written into the crontab file.
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    profiles: ["digest"]
+    depends_on:
+      - app
+    environment:
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET to run the digest}
+      DIGEST_AT: ${DIGEST_AT:-0 8 * * *}
+      # Outreach is checked every five minutes. That interval is the
+      # resolution of every send window and every gap between two
+      # messages, and the campaign page says so rather than letting
+      # somebody discover it from the timestamps. Harmless while outreach
+      # is off: the endpoint answers {skipped} after one settings read.
+      OUTREACH_AT: ${OUTREACH_AT:-*/5 * * * *}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "$$DIGEST_AT wget -q -O- --post-data='{}' --header=\"Content-Type: application/json\" --header=\"Authorization: Bearer \$$CRON_SECRET\" http://app:3000/api/cron/daily" > /etc/crontabs/root
+        echo "$$OUTREACH_AT wget -q -O- --post-data='{}' --header=\"Content-Type: application/json\" --header=\"Authorization: Bearer \$$CRON_SECRET\" http://app:3000/api/cron/outreach" >> /etc/crontabs/root
+        exec crond -f -l 8
+
+volumes:
+  pgdata:
+  uploads:

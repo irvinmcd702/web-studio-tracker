@@ -1,0 +1,140 @@
+name: CI
+
+# Every push and every pull request. The suite talks to a real Postgres
+# because that is what it tests against locally — a mocked database would pass
+# happily while a migration was broken.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tracker
+          POSTGRES_PASSWORD: tracker
+          POSTGRES_DB: studio_tracker_test
+        ports:
+          - 5440:5432
+        # The job must not start querying before the server is accepting.
+        options: >-
+          --health-cmd "pg_isready -U tracker"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The test setup refuses to run against anything but this database name,
+      # so a mistyped URL cannot wipe a real one.
+      DATABASE_URL: postgresql://tracker:tracker@localhost:5440/studio_tracker_test?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-anywhere-real
+      APP_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The tree that actually ships. Dev-only advisories are noisy and cannot
+      # reach a user, so they do not fail the build; anything high or critical
+      # in a runtime dependency does, because that is what a request touches.
+      # Read the report either way — a failure here is not the only signal.
+      - name: Audit the dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Generate the Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Things the interface claims that the server does not do — a field no
+      # action reads, a switch nothing consults, a link with no route. None of
+      # these break a type or fail a test, because both halves are correct on
+      # their own; the promise between them is what is missing.
+      - name: Audit the promises
+        run: npm run audit
+
+      - name: Test
+        run: npx vitest run
+
+      - name: Build
+        run: npx next build
+
+  # A real browser against the real production build. The job above proves the
+  # server is right; this one proves the two halves are joined — that the button
+  # submits the form the action expects, that the cookie survives a hard
+  # navigation, that a page which should refuse actually refuses. Its first run
+  # found a New ticket button that had never created a ticket.
+  #
+  # Separate job, so a browser flake never reads as a broken unit suite, and so
+  # both start at once rather than one waiting on the other.
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tracker
+          POSTGRES_PASSWORD: tracker
+          # Its own database. The end-to-end seed truncates on the way in, and
+          # the global setup refuses to run against a name that is not this one.
+          POSTGRES_DB: studio_tracker_e2e
+        ports:
+          - 5440:5432
+        options: >-
+          --health-cmd "pg_isready -U tracker"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://tracker:tracker@localhost:5440/studio_tracker_e2e?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-anywhere-real
+      APP_URL: http://127.0.0.1:3311
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Chromium only. A second engine doubles the minutes and has yet to catch
+      # anything this one did not.
+      - name: Install the browser
+        run: npx playwright install --with-deps chromium
+
+      # The tests drive the built server, not the dev server, so the build has
+      # to exist before they start.
+      - name: Build
+        run: npm run build
+
+      - name: End-to-end tests
+        run: npx playwright test
+
+      # Traces, screenshots and video, kept only when something went wrong.
+      - name: Keep the evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

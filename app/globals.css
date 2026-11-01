@@ -1,0 +1,401 @@
+@import "tailwindcss";
+
+/*
+ * Studio Tracker design tokens.
+ *
+ * One set of semantic custom properties, two themes. Components never name a
+ * palette colour directly, so switching `data-theme` on <html> re-skins the
+ * whole app without a single `dark:` class.
+ *
+ * Colour is spent on meaning: status, priority, budget pressure, the current
+ * selection. Everything else is a neutral with a trace of the accent's hue.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, from the page backdrop up to floating panels. */
+  --color-canvas: oklch(0.977 0.004 235);
+  --color-surface: oklch(1 0 0);
+  --color-surface-2: oklch(0.988 0.003 235);
+  --color-surface-3: oklch(0.955 0.006 235);
+  --color-hover: oklch(0.966 0.005 235);
+  --color-hover-strong: oklch(0.938 0.007 235);
+
+  --color-line: oklch(0.915 0.006 235);
+  --color-line-strong: oklch(0.855 0.01 235);
+
+  /* Text, in four steps. `muted` is the floor for anything a user must read,
+     which means it has to clear 4.5:1 on the darkest surface it ever sits on,
+     not just on white. At 0.545 it managed 4.93 on `surface` and 4.11 on
+     `hover-strong` — the floor was only a floor where it was least needed. */
+  --color-ink: oklch(0.245 0.018 255);
+  --color-ink-2: oklch(0.44 0.016 255);
+  --color-muted: oklch(0.52 0.014 255);
+  --color-faint: oklch(0.68 0.012 255);
+
+  /* The one accent: primary actions, current selection, focus, links. */
+  --color-brand: oklch(0.5 0.085 220);
+  --color-brand-hover: oklch(0.435 0.09 220);
+  --color-brand-soft: oklch(0.958 0.02 220);
+  --color-brand-line: oklch(0.86 0.045 220);
+  --color-on-brand: oklch(0.995 0 0);
+  --color-ring: oklch(0.5 0.085 220 / 0.45);
+
+  --color-ok: oklch(0.52 0.11 155);
+  --color-ok-soft: oklch(0.958 0.03 155);
+  --color-ok-line: oklch(0.865 0.06 155);
+
+  --color-warn: oklch(0.545 0.12 78);
+  --color-warn-soft: oklch(0.962 0.04 85);
+  --color-warn-line: oklch(0.87 0.08 85);
+
+  --color-danger: oklch(0.52 0.17 22);
+  --color-danger-hover: oklch(0.455 0.175 22);
+  --color-danger-soft: oklch(0.962 0.03 22);
+  --color-on-danger: oklch(0.995 0 0);
+  --color-danger-line: oklch(0.875 0.07 22);
+
+  /* Elevation is for things that float. Cards get a line, not a shadow. */
+  --shadow-pop:
+    0 10px 24px -12px oklch(0.25 0.03 255 / 0.28),
+    0 2px 6px -3px oklch(0.25 0.03 255 / 0.14);
+  --shadow-sticky: 0 1px 0 0 var(--color-line);
+
+  --radius-field: 8px;
+  --radius-card: 10px;
+
+  --dur-fast: 110ms;
+  --dur: 170ms;
+  --dur-slow: 260ms;
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+
+  --z-sticky: 20;
+  --z-dropdown: 40;
+  --z-overlay: 60;
+  --z-modal: 70;
+  --z-toast: 90;
+
+  /* Overlay scrims: the same on both themes, so a lightbox always dims. */
+  --color-scrim: oklch(0.18 0.02 255 / 0.42);
+  --color-scrim-strong: oklch(0.12 0.02 255 / 0.88);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* A dim room, not a terminal: blue-grey charcoal, never pure black. */
+  --color-canvas: oklch(0.205 0.012 255);
+  --color-surface: oklch(0.243 0.012 255);
+  --color-surface-2: oklch(0.224 0.012 255);
+  --color-surface-3: oklch(0.278 0.012 255);
+  --color-hover: oklch(0.288 0.013 255);
+  --color-hover-strong: oklch(0.325 0.014 255);
+
+  --color-line: oklch(0.318 0.012 255);
+  --color-line-strong: oklch(0.405 0.014 255);
+
+  --color-ink: oklch(0.955 0.004 255);
+  --color-ink-2: oklch(0.83 0.008 255);
+  --color-muted: oklch(0.705 0.01 255);
+  --color-faint: oklch(0.56 0.01 255);
+
+  --color-brand: oklch(0.725 0.1 220);
+  --color-brand-hover: oklch(0.79 0.09 220);
+  --color-brand-soft: oklch(0.305 0.045 220);
+  --color-brand-line: oklch(0.42 0.06 220);
+  --color-on-brand: oklch(0.18 0.02 250);
+  --color-ring: oklch(0.725 0.1 220 / 0.55);
+
+  --color-ok: oklch(0.78 0.13 155);
+  --color-ok-soft: oklch(0.29 0.05 155);
+  --color-ok-line: oklch(0.4 0.07 155);
+
+  --color-warn: oklch(0.81 0.12 80);
+  --color-warn-soft: oklch(0.305 0.055 80);
+  --color-warn-line: oklch(0.41 0.075 80);
+
+  --color-danger: oklch(0.72 0.15 22);
+  --color-danger-hover: oklch(0.78 0.14 22);
+  --color-danger-soft: oklch(0.31 0.07 22);
+  --color-on-danger: oklch(0.175 0.03 22);
+  --color-danger-line: oklch(0.42 0.1 22);
+
+  --shadow-pop:
+    0 12px 28px -14px oklch(0 0 0 / 0.65), 0 2px 8px -4px oklch(0 0 0 / 0.5);
+}
+
+@theme inline {
+  --font-sans:
+    var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Headings in a tool are labels, not display type: tight, never shouting. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.011em;
+    text-wrap: balance;
+  }
+
+  ::selection {
+    background: var(--color-brand-soft);
+    color: var(--color-ink);
+  }
+
+  /* One focus treatment everywhere, visible on both themes. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--color-muted);
+  }
+}
+
+@layer components {
+  /* Blocks that exist only on paper: report letterheads and the like. */
+  .print-only {
+    display: none;
+  }
+
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium;
+    color: var(--color-ink);
+  }
+
+  .hint {
+    @apply mt-1 text-xs;
+    color: var(--color-muted);
+  }
+
+  /* A link inside a paragraph. Underlined on hover rather than always, so a
+     page of prose does not turn into a page of blue. */
+  .link {
+    @apply font-medium;
+    color: var(--color-brand);
+  }
+  .link:hover {
+    @apply underline;
+  }
+
+  .field {
+    @apply w-full px-3 py-2 text-sm outline-none;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-field);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field:hover:not(:disabled):not(:focus) {
+    border-color: var(--color-line-strong);
+  }
+
+  .field:focus {
+    border-color: var(--color-brand);
+    box-shadow: 0 0 0 3px var(--color-ring);
+    outline: none;
+  }
+
+  .field:disabled {
+    background: var(--color-surface-3);
+    color: var(--color-muted);
+    cursor: not-allowed;
+  }
+
+  .field[aria-invalid="true"] {
+    border-color: var(--color-danger);
+  }
+
+  /* Chrome paints its own pale blue over autofilled inputs, which looks broken
+     on the dark theme. Repaint it with our own surface. */
+  .field:-webkit-autofill,
+  .field:-webkit-autofill:hover,
+  .field:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--color-ink);
+    -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset;
+    caret-color: var(--color-ink);
+    transition: background-color 100000s ease-in-out 0s;
+  }
+
+  /* Loading placeholders. Quiet on purpose: a slow pulse between two
+     neighbouring surface steps, never a shimmer sweeping across the page. */
+  .skeleton {
+    background: var(--color-surface-3);
+    animation: skeleton-pulse 1.6s var(--ease-out) infinite;
+  }
+
+  @keyframes skeleton-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  /* Numbers are the reason people open this app: they line up. */
+  .num,
+  .table-base td,
+  .table-base th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .table-base {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .table-base th {
+    @apply px-4 py-2.5 text-left text-[11.5px] font-semibold uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-muted);
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-surface-2);
+  }
+
+  .table-base td {
+    @apply px-4 py-3 align-middle;
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  .table-base tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* A DB-stored hex (workflow status, team, priority) rendered as a pill that
+     stays legible on either theme. The raw hue is never used as text colour. */
+  .tint {
+    background: color-mix(in oklab, var(--tint) 12%, var(--color-surface));
+    color: color-mix(in oklab, var(--tint) 55%, var(--color-ink));
+    border: 1px solid color-mix(in oklab, var(--tint) 30%, transparent);
+  }
+
+  [data-theme="dark"] .tint {
+    background: color-mix(in oklab, var(--tint) 20%, var(--color-surface));
+    color: color-mix(in oklab, var(--tint) 62%, white);
+    border-color: color-mix(in oklab, var(--tint) 38%, transparent);
+  }
+
+  /* Avatars carry a colour chosen per person, so the initials can't just be
+     white and hope. The hue is kept and pushed to a lightness that always
+     clears 4.5:1 against the label on top of it. */
+  .avatar {
+    background: color-mix(in oklab, var(--avatar) 58%, oklch(0.14 0.02 255));
+    color: #fff;
+  }
+
+  [data-theme="dark"] .avatar {
+    background: color-mix(in oklab, var(--avatar) 62%, white);
+    color: oklch(0.2 0.02 255);
+  }
+}
+
+/* Motion states a change; it never performs. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Printing a report should yield a clean hand-off sheet, not a screenshot of
+   the app: no navigation, no buttons, no dark theme, and tables that don't
+   split rows across pages. */
+@media print {
+  :root,
+  [data-theme="dark"] {
+    color-scheme: light;
+    --color-canvas: #fff;
+    --color-surface: #fff;
+    --color-surface-2: #fff;
+    --color-surface-3: #fff;
+    --color-line: #d0d5dd;
+    --color-line-strong: #98a2b3;
+    --color-ink: #101828;
+    --color-ink-2: #344054;
+    --color-muted: #475467;
+    --color-faint: #667085;
+    --color-brand: #17506b;
+  }
+
+  aside,
+  header,
+  .print-hide {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  .card {
+    break-inside: avoid;
+  }
+
+  table {
+    break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}
+
+/* Thin scrollbars for board columns and chat panes. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}

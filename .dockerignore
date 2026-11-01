@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+uploads
+tests
+*.log
+.server*
+.env
+.env.test
